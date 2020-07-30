@@ -1,1 +1,1 @@
-# stop-start-ec2-insatnces
+# stop-start-ec2-instances
