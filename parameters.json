@@ -1,0 +1,6 @@
+[
+  { "ParameterKey": "EnvironmentTag", "ParameterValue": "hlg" },
+  { "ParameterKey": "SetupTag", "ParameterValue": "jaf" },
+  { "ParameterKey": "S3BucketDeploy", "ParameterValue": "jaf-deploy" },
+  { "ParameterKey": "SNSEmail", "ParameterValue": "jorgef.flores@gmail.com" },
+]

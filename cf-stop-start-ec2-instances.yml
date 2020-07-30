@@ -1,0 +1,216 @@
+AWSTemplateFormatVersion: '2010-09-09'
+Description: Stop and Start EC2 instances
+Parameters:
+
+     
+  EnvironmentTag:
+    Default: tst
+    Description: Tag resources with environment name for easy filtering
+    Type: String
+    AllowedValues:
+      - 'tst'
+      - 'hlg'
+      - 'prd'
+
+  SetupTag:
+    Description: Setup name to be shared across master-slave regions
+    Default: jaf
+    Type: String
+  
+  S3BucketDeploy:
+    Description: Bucket where the lambdas are
+    Default: jaf-deploy
+    Type: String
+
+  SNSEmail:
+    Default: jorgef.flores@gmail.com
+    Description: Email address to notify
+    Type: String
+
+Mappings:
+
+  RegionShortCode:
+    us-east-1:
+      value: nvi
+    us-east-2:
+      value: ohi
+    us-west-1:
+      value: nca
+    us-west-2:
+      value: ore
+    eu-west-1: 
+      value: ire
+    eu-central-1:
+      value: fkt
+    ap-northeast-1:
+      value: tko
+    ap-northeast-2:
+      value: seo
+    ap-southeast-1:
+      value: sgo
+    ap-southeast-2:
+      value: syd
+    ap-south-1:
+      value: mmb
+    sa-east-1:
+      value: spo
+    cn-north-1:
+      value: bjg
+
+Metadata:
+  AWS::CloudFormation::Interface:
+    ParameterGroups:
+      - Label:
+          default: Setup Environment
+        Parameters:
+          - EnvironmentTag
+          - SetupTag
+          - S3BucketDeploy
+          - SNSEmail
+      
+Resources:
+
+  StopStartInstanceRole:
+    Type: AWS::IAM::Role
+    Properties:
+      RoleName: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - stopstart-instance
+      AssumeRolePolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+        - Effect: Allow
+          Principal:
+            Service:
+            - lambda.amazonaws.com
+          Action:
+          - sts:AssumeRole
+      Path: "/"
+
+  StopStartInstancePolicy:
+    Type: AWS::IAM::Policy
+    Properties:
+      PolicyName: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - stopstart-instance
+      PolicyDocument:
+        Version: '2012-10-17'
+        Statement:
+          - Effect: Allow
+            Action:
+            - logs:CreateLogStream
+            - ec2:DescribeInstances
+            - ec2:StartInstances
+            - ec2:StopInstances
+            - logs:CreateLogGroup
+            - logs:PutLogEvents
+            Resource: '*'
+      Roles:
+        - !Ref 'StopStartInstanceRole'
+    DependsOn: StopStartInstanceRole
+
+  StopStartInstanceFunction:
+    Type: AWS::Lambda::Function
+    Properties:
+      FunctionName: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - stopstart-instance
+      Handler: index.handler
+      Role: !GetAtt StopStartInstanceRole.Arn
+      Code:
+        S3Bucket: !Ref 'S3BucketDeploy'
+        S3Key: 'lambdas/stop-start-instance-1.1.zip'
+      Runtime: nodejs10.x
+      Timeout: 25
+
+  StopStartInstanceTopic:
+    Type: AWS::SNS::Topic
+    Properties:
+      DisplayName: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - stopstart-topic
+      TopicName: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - stopstart-topic
+      Subscription:
+        - Endpoint: !Ref 'SNSEmail'
+          Protocol: email
+
+  ScheduledStartRule: 
+    Type: AWS::Events::Rule
+    Properties: 
+      Description: "ScheduledRule Start Instances"
+      Name: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - start-instance
+      ScheduleExpression: "cron(30 8 * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "StopStartInstanceFunction"
+              - "Arn"
+          Id: "TargetFunctionV1"
+          Input: '{"action": "start"}'
+
+  ScheduledStopRule: 
+    Type: AWS::Events::Rule
+    Properties:
+      Description: "ScheduledRule Stop Instances"
+      Name: !Join
+        - '-'
+        - - !FindInMap [ RegionShortCode, !Ref 'AWS::Region', value ]
+          - !Ref 'EnvironmentTag'
+          - !Ref 'SetupTag'
+          - stop-instance
+      ScheduleExpression: "cron(0 23 * * ? *)"
+      State: "ENABLED"
+      Targets: 
+        - 
+          Arn: 
+            Fn::GetAtt: 
+              - "StopStartInstanceFunction"
+              - "Arn"
+          Id: "TargetFunctionV1"
+          Input: '{"action": "stop"}'
+
+  StartInstanceFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt StopStartInstanceFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: 
+        Fn::GetAtt: 
+          - "ScheduledStartRule"
+          - "Arn"
+
+  StopInstanceFunctionPermission:
+    Type: AWS::Lambda::Permission
+    Properties:
+      FunctionName: !GetAtt StopStartInstanceFunction.Arn
+      Action: 'lambda:InvokeFunction'
+      Principal: events.amazonaws.com
+      SourceArn: 
+        Fn::GetAtt: 
+          - "ScheduledStopRule"
+          - "Arn"
